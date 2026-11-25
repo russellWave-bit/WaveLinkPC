@@ -1,0 +1,64 @@
+name: Build WaveLink PC
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pc:
+    runs-on: windows-latest
+    steps:
+      - name: Get the files
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Look for the zip
+        id: zip
+        shell: bash
+        run: |
+          if ls *.zip > /dev/null 2>&1; then
+            echo "found=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=no" >> "$GITHUB_OUTPUT"
+            echo "No zip in the repo yet. Upload WaveLinkPC.zip to the repo root and this will build by itself."
+          fi
+
+      - name: Set up .NET
+        if: steps.zip.outputs.found == 'yes'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Unpack the zip
+        if: steps.zip.outputs.found == 'yes'
+        shell: bash
+        run: |
+          # unpack oldest zip first, newest last, so the newest files always win
+          for f in *.zip; do echo "$(git log -1 --format=%ct -- "$f") $f"; done | sort -n | while IFS= read -r line; do
+            z="${line#* }"; echo "unpacking $z"; 7z x -y -o. "$z" > /dev/null
+          done
+          ls
+
+      - name: Build the PC app
+        if: steps.zip.outputs.found == 'yes'
+        shell: bash
+        run: |
+          dotnet publish WaveLinkPC/WaveLinkPC.csproj -c Release -r win-x64 --self-contained true \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true -p:DebugType=none -o pcout
+          mkdir -p out
+          cp pcout/WaveLinkPC.exe out/WaveLinkPC.exe
+          ls -la out
+
+      - name: Publish a release
+        if: steps.zip.outputs.found == 'yes'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: WaveLink PC build ${{ github.run_number }}
+          files: out/WaveLinkPC.exe
